@@ -284,3 +284,4 @@ See `AI_PROMPTS.md` for the key prompts used and what was AI-generated vs. manua
 
 See `GIT_COMMITS.md` for a suggested sequence of commits if you want the repository history to reflect incremental development rather than a single commit.
 This is a test update for demo purposes.
+Demo update line
