@@ -1,0 +1,357 @@
+openapi: 3.0.3
+info:
+  title: Granet Technologies - Task Manager API
+  description: >
+    REST API for managing tasks (Create, Read, Update, Delete), backed by
+    MySQL. Every response uses a consistent envelope:
+    `{ "success": bool, "data"?: ..., "error"?: string }`.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:8080/api
+    description: Local development
+
+tags:
+  - name: Tasks
+  - name: Auth
+  - name: Health
+
+paths:
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create an account and log in
+      description: >
+        Creates a new user with a bcrypt-hashed password and immediately
+        logs them in, setting an HttpOnly session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupInput" }
+      responses:
+        "201":
+          description: Account created and logged in
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Email already in use
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: Verifies credentials and sets an HttpOnly session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginInput" }
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "401":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out
+      description: Invalidates the current session and clears the cookie.
+      responses:
+        "200":
+          description: Logged out
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the signed-in user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Auth]
+      summary: Delete the signed-in user's own account
+      description: >
+        Permanently deletes the account. Their tasks and sessions are
+        removed automatically (ON DELETE CASCADE).
+      responses:
+        "200":
+          description: Account deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Used by container orchestrators / uptime monitors.
+      servers:
+        - url: http://localhost:8080
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthEnvelope"
+
+  /tasks:
+    get:
+      tags: [Tasks]
+      summary: List tasks
+      description: Supports optional search, status filter, and sort.
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+          description: Case-insensitive match against title or description.
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/TaskStatus" }
+        - name: sortBy
+          in: query
+          schema:
+            type: string
+            enum: [due_date_asc, due_date_desc, created_at_desc]
+            default: created_at_desc
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/Task" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+    post:
+      tags: [Tasks]
+      summary: Create a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInput" }
+      responses:
+        "201":
+          description: Task created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/Task" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /tasks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: uint64, minimum: 1 }
+
+    get:
+      tags: [Tasks]
+      summary: Get a task by ID
+      responses:
+        "200":
+          description: Task found
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/Task" }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    put:
+      tags: [Tasks]
+      summary: Update a task (full replace)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TaskInput" }
+      responses:
+        "200":
+          description: Task updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/Task" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+    delete:
+      tags: [Tasks]
+      summary: Delete a task
+      responses:
+        "200":
+          description: Task deleted
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          id: { type: integer, format: uint64 }
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  schemas:
+    TaskStatus:
+      type: string
+      enum: [pending, in_progress, completed]
+
+    Task:
+      type: object
+      properties:
+        id: { type: integer, format: uint64, example: 1 }
+        title: { type: string, example: "Design database schema" }
+        description: { type: string, example: "Model the tasks table with proper indexes" }
+        dueDate: { type: string, format: date, example: "2026-07-20" }
+        status: { $ref: "#/components/schemas/TaskStatus" }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, title, dueDate, status, createdAt, updatedAt]
+
+    TaskInput:
+      type: object
+      properties:
+        title:
+          type: string
+          maxLength: 150
+          example: "Write onboarding docs"
+        description:
+          type: string
+          maxLength: 2000
+          example: "Cover setup, architecture, and FAQ"
+        dueDate:
+          type: string
+          format: date
+          example: "2026-08-01"
+        status:
+          $ref: "#/components/schemas/TaskStatus"
+      required: [title, dueDate, status]
+
+    Envelope:
+      type: object
+      properties:
+        success: { type: boolean }
+      required: [success]
+
+    HealthEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: true }
+        data:
+          type: object
+          properties:
+            status: { type: string, example: ok }
+
+    ErrorEnvelope:
+      type: object
+      properties:
+        success: { type: boolean, example: false }
+        error: { type: string, example: "title is required" }
+      required: [success, error]
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: uint64, example: 1 }
+        name: { type: string, example: "Ayesha Khan" }
+        email: { type: string, format: email, example: "ayesha@example.com" }
+        createdAt: { type: string, format: date-time }
+      required: [id, name, email, createdAt]
+
+    SignupInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 100, example: "Ayesha Khan" }
+        email: { type: string, format: email, example: "ayesha@example.com" }
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          example: "correct-horse-battery-staple"
+      required: [name, email, password]
+
+    LoginInput:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+      required: [email, password]
+
+  responses:
+    BadRequest:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Task not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: Missing, invalid, or expired session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
