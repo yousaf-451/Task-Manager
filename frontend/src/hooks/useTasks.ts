@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { taskApi } from "../api/taskApi";
 import { ApiError } from "../api/client";
-import type { CreateTaskInput, Task, TaskListParams, UpdateTaskInput } from "../types/task";
+import type { CreateTaskInput, Pagination, Task, TaskListParams, UpdateTaskInput } from "../types/task";
+
+const DEFAULT_PAGINATION: Pagination = { page: 1, pageSize: 10, total: 0, totalPages: 1 };
 
 interface UseTasksResult {
   tasks: Task[];
   loading: boolean;
   error: string | null;
+  pagination: Pagination;
+  setPage: (page: number) => void;
   refetch: () => Promise<void>;
   createTask: (input: CreateTaskInput) => Promise<Task>;
   updateTask: (id: number, input: UpdateTaskInput) => Promise<Task>;
@@ -22,25 +26,56 @@ interface UseTasksResult {
  * Owns the task list for the given filter/sort params, and exposes CRUD
  * helpers that keep local state in sync after each mutation so the UI
  * updates immediately without a full page reload.
+ *
+ * `enabled` gates the fetch - App.tsx passes `Boolean(user)` so this never
+ * calls the API before a session exists, and fetches for the first time
+ * the moment `enabled` flips to true right after login/signup.
  */
-export function useTasks(params: TaskListParams): UseTasksResult {
+export function useTasks(params: TaskListParams, options?: { enabled?: boolean }): UseTasksResult {
+  const enabled = options?.enabled ?? true;
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState<number>(1);
+  const [pagination, setPagination] = useState<Pagination>(DEFAULT_PAGINATION);
+
+  // Whenever a filter/search/sort changes, go back to page 1 - staying on
+  // (say) page 5 of a now-different, possibly shorter result set would be
+  // confusing (and might be past the last page entirely).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setPage(1);
+  }, [params.search, params.status, params.priority, params.category, params.favorite, params.sortBy]);
 
   const fetchTasks = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await taskApi.list(params);
-      setTasks(data);
+      const { tasks: pageTasks, pagination: meta } = await taskApi.list({
+        ...params,
+        page,
+        pageSize: params.pageSize ?? DEFAULT_PAGINATION.pageSize,
+      });
+      setTasks(pageTasks);
+      setPagination(meta);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load tasks.");
     } finally {
       setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.search, params.status, params.priority, params.category, params.favorite, params.sortBy]);
+  }, [
+    enabled,
+    params.search,
+    params.status,
+    params.priority,
+    params.category,
+    params.favorite,
+    params.sortBy,
+    params.pageSize,
+    page,
+  ]);
 
   useEffect(() => {
     fetchTasks();
@@ -103,6 +138,8 @@ export function useTasks(params: TaskListParams): UseTasksResult {
     tasks,
     loading,
     error,
+    pagination,
+    setPage,
     refetch: fetchTasks,
     createTask,
     updateTask,

@@ -53,7 +53,13 @@ func run() error {
 	taskRepo := repository.NewMySQLTaskRepository(db)
 	taskService := service.NewTaskService(taskRepo)
 	taskHandler := handler.NewTaskHandler(taskService)
-	router := routes.NewRouter(taskHandler, cfg.CORSAllowedOrigins)
+
+	userRepo := repository.NewMySQLUserRepository(db)
+	sessionRepo := repository.NewMySQLSessionRepository(db)
+	authService := service.NewAuthService(userRepo, sessionRepo)
+	authHandler := handler.NewAuthHandler(authService, cfg.CookieSecure)
+
+	router := routes.NewRouter(taskHandler, authHandler, authService, cfg.CORSAllowedOrigins)
 
 	// 4. HTTP server with sane timeouts
 	srv := &http.Server{

@@ -1,0 +1,18 @@
+# --- Backend (Go) ---
+backend/.env
+backend/task-manager
+backend/*.exe
+backend/tmp/
+backend/bin/
+
+# --- Frontend (Node/Vite) ---
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+*.log

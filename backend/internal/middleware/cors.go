@@ -23,6 +23,14 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 				w.Header().Set("Access-Control-Max-Age", "600")
+				// The session cookie (see internal/middleware/auth.go) only
+				// gets sent by the browser on cross-origin requests if both
+				// sides opt in: the frontend's fetch() calls pass
+				// `credentials: "include"`, and the server must echo this
+				// header back. Note this is only safe together with an
+				// explicit origin above (never "*") - browsers reject the
+				// combination of a wildcard origin with credentials.
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 
 			if r.Method == http.MethodOptions {

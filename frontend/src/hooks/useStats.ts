@@ -10,13 +10,16 @@ interface UseStatsResult {
   refetch: () => Promise<void>;
 }
 
-/** Owns the dashboard's aggregate counts (GET /api/tasks/stats). */
-export function useStats(): UseStatsResult {
+/** Owns the dashboard's aggregate counts (GET /api/tasks/stats). Gated by
+ * `enabled` for the same reason as useTasks - no fetch before login. */
+export function useStats(options?: { enabled?: boolean }): UseStatsResult {
+  const enabled = options?.enabled ?? true;
   const [stats, setStats] = useState<TaskStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
+    if (!enabled) return;
     setLoading(true);
     setError(null);
     try {
@@ -27,7 +30,7 @@ export function useStats(): UseStatsResult {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     fetchStats();

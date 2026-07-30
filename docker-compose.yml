@@ -37,6 +37,7 @@ services:
       DB_MAX_OPEN_CONNS: 25
       DB_MAX_IDLE_CONNS: 10
       DB_CONN_MAX_LIFETIME_MIN: 5
+      COOKIE_SECURE: "false"
     ports:
       - "8080:8080"
 

@@ -6,6 +6,7 @@ import { Dashboard } from "./components/Dashboard";
 import { SearchFilterBar } from "./components/SearchFilterBar";
 import { TaskList } from "./components/TaskList";
 import { TaskForm } from "./components/TaskForm";
+import { AuthScreen } from "./components/AuthScreen";
 import { BulkActionBar } from "./components/BulkActionBar";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { ToastStack } from "./components/Toast";
@@ -13,12 +14,15 @@ import type { ToastMessage } from "./components/Toast";
 import { useTasks } from "./hooks/useTasks";
 import { useStats } from "./hooks/useStats";
 import { useCategories } from "./hooks/useCategories";
+import { useAuth } from "./hooks/useAuth";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { ApiError } from "./api/client";
 import { SEARCH_DEBOUNCE_MS, TOAST_DURATION_MS } from "./constants";
 import type { CreateTaskInput, SortOption, Task, TaskPriority, TaskStatus } from "./types/task";
 
 export default function App() {
+  const { user, checkingSession, signup, login, logout, deleteAccount } = useAuth();
+
   const [view, setView] = useState<View>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -37,6 +41,7 @@ export default function App() {
   const [editingTask, setEditingTask] = useState<Task | undefined>(undefined);
   const [deletingTask, setDeletingTask] = useState<Task | null>(null);
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+  const [deleteAccountConfirm, setDeleteAccountConfirm] = useState(false);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -57,6 +62,8 @@ export default function App() {
     tasks,
     loading,
     error,
+    pagination,
+    setPage,
     createTask,
     updateTask,
     deleteTask,
@@ -65,10 +72,10 @@ export default function App() {
     archiveTask,
     bulkDelete,
     bulkComplete,
-  } = useTasks(listParams);
+  } = useTasks(listParams, { enabled: Boolean(user) });
 
-  const { stats, loading: statsLoading, error: statsError, refetch: refetchStats } = useStats();
-  const categories = useCategories(tasks.length);
+  const { stats, loading: statsLoading, error: statsError, refetch: refetchStats } = useStats({ enabled: Boolean(user) });
+  const categories = useCategories(`${tasks.length}`);
 
   function pushToast(kind: ToastMessage["kind"], text: string) {
     const id = Date.now() + Math.random();
@@ -110,6 +117,21 @@ export default function App() {
       const message = err instanceof ApiError ? err.message : "Something went wrong.";
       pushToast("error", message);
       throw err;
+    }
+  }
+
+  async function handleLogout() {
+    await logout();
+  }
+
+  async function handleDeleteAccount() {
+    try {
+      await deleteAccount();
+      pushToast("success", "Your account was deleted.");
+    } catch (err) {
+      pushToast("error", err instanceof ApiError ? err.message : "Failed to delete account.");
+    } finally {
+      setDeleteAccountConfirm(false);
     }
   }
 
@@ -205,6 +227,16 @@ export default function App() {
 
   const hasFilters = Boolean(debouncedSearch || status || priority || category || favoriteOnly);
 
+  // Don't flash the login screen while we're still checking for an
+  // existing session cookie on first load.
+  if (checkingSession) {
+    return <div className="app-shell" />;
+  }
+
+  if (!user) {
+    return <AuthScreen onLogin={login} onSignup={signup} />;
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -212,11 +244,18 @@ export default function App() {
         onViewChange={setView}
         open={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        taskCount={tasks.length}
+        taskCount={pagination.total}
       />
 
       <div className="app-content">
-        <Header view={view} onAddTask={openAddForm} onOpenSidebar={() => setSidebarOpen(true)} />
+        <Header
+          view={view}
+          onAddTask={openAddForm}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          user={user}
+          onLogout={handleLogout}
+          onDeleteAccount={() => setDeleteAccountConfirm(true)}
+        />
 
         <main className="app-main">
           {view === "dashboard" ? (
@@ -270,6 +309,8 @@ export default function App() {
                 onToggleFavorite={handleToggleFavorite}
                 onArchive={handleArchive}
                 onAddTask={openAddForm}
+                pagination={pagination}
+                onPageChange={setPage}
               />
             </>
           )}
@@ -278,6 +319,16 @@ export default function App() {
 
       {formOpen && (
         <TaskForm initialTask={editingTask} categories={categories} onSubmit={handleFormSubmit} onClose={closeForm} />
+      )}
+
+      {deleteAccountConfirm && (
+        <ConfirmDialog
+          title="Delete account"
+          message="Are you sure you want to delete your account? This permanently removes your account and every task you own. This can't be undone."
+          confirmLabel="Delete account"
+          onConfirm={handleDeleteAccount}
+          onCancel={() => setDeleteAccountConfirm(false)}
+        />
       )}
 
       {deletingTask && (

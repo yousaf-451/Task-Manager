@@ -283,5 +283,32 @@ See `AI_PROMPTS.md` for the key prompts used and what was AI-generated vs. manua
 ## 14. Suggested Git workflow
 
 See `GIT_COMMITS.md` for a suggested sequence of commits if you want the repository history to reflect incremental development rather than a single commit.
-This is a test update for demo purposes.
-Demo update line
+
+## 15. Follow-up fix: user ownership + pagination
+
+Two issues were raised in review and have been addressed:
+
+1. **Referential integrity / multi-user ownership.** Previously the `tasks`
+   table had no way to tell whose task was whose. A `users` table was
+   added, and `tasks.user_id` is now a `NOT NULL` foreign key referencing
+   `users.id` (`ON DELETE CASCADE`). Every repository/service/handler
+   method now scopes reads and writes to a specific user, so one user can
+   never see, edit, or delete another user's tasks. See
+   `migrations/up/0004_add_users_and_ownership.sql` for the migration and
+   `backend/internal/models/user.go` for the (deliberately minimal — no
+   real auth) model.
+
+   The frontend identifies "the current user" via a demo account switcher
+   in the header, which sends an `X-User-Id` request header. This is a
+   simplified stand-in for real authentication (no login/passwords/JWTs);
+   swapping it for a real session later only touches
+   `handler.currentUserID`.
+
+2. **Pagination.** `GET /api/tasks` now accepts `page` and `pageSize` query
+   parameters and only ever fetches that one page's worth of rows from
+   MySQL (`LIMIT`/`OFFSET` in `repository.TaskRepository.List`), instead of
+   loading the entire table into memory. The response shape is now
+   `{ tasks: [...], pagination: { page, pageSize, total, totalPages } }`.
+   The task list in the UI shows Prev/Next controls whenever there is more
+   than one page.
+

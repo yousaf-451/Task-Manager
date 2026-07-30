@@ -1,5 +1,39 @@
 # Changelog
 
+## [Unreleased] — Real authentication
+
+Replaces the demo `X-User-Id` header (added in the "Premium overhaul" below
+as a stand-in for login) with actual signup/login/logout and account
+deletion, backed by bcrypt password hashes and server-side sessions.
+
+### Added — Backend
+- `POST /api/auth/signup`, `POST /api/auth/login`, `POST /api/auth/logout`,
+  `GET /api/auth/me`, `DELETE /api/auth/me` (delete own account)
+- Migration `0005_add_auth.sql`: `users.password_hash` column + a
+  `sessions` table (session token as primary key, cascades on user delete)
+- `internal/middleware/auth.go`: `RequireAuth` wrapper that validates the
+  session cookie and attaches the user id to the request context
+- `internal/service/auth_service.go`: signup/login/logout/current-user/
+  delete-account logic, bcrypt hashing, random session token generation
+- CORS now sends `Access-Control-Allow-Credentials: true` so the session
+  cookie can be sent cross-origin from the frontend
+
+### Removed — Backend
+- The old demo `GET /api/users` / `POST /api/users` endpoints and the
+  `X-User-Id` header they were paired with
+
+### Added — Frontend
+- `AuthScreen` (login/signup), `useAuth` hook (session check on load,
+  login, signup, logout, delete account)
+- Account menu in the header (signed-in user's name/email, Log out,
+  Delete account with a confirmation dialog)
+- `fetch()` calls now send `credentials: "include"` instead of the old
+  `X-User-Id` header
+
+### Removed — Frontend
+- The demo account switcher dropdown, `AddUserForm`, `useCurrentUser`,
+  and `api/currentUser.ts` / `api/userApi.ts`
+
 ## [Unreleased] — Premium overhaul
 
 Builds on top of the original assignment submission below without changing

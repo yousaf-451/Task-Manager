@@ -12,9 +12,106 @@ servers:
 
 tags:
   - name: Tasks
+  - name: Auth
   - name: Health
 
 paths:
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create an account and log in
+      description: >
+        Creates a new user with a bcrypt-hashed password and immediately
+        logs them in, setting an HttpOnly session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignupInput" }
+      responses:
+        "201":
+          description: Account created and logged in
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          description: Email already in use
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: Verifies credentials and sets an HttpOnly session cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginInput" }
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "401":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out
+      description: Invalidates the current session and clears the cookie.
+      responses:
+        "200":
+          description: Logged out
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get the signed-in user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags: [Auth]
+      summary: Delete the signed-in user's own account
+      description: >
+        Permanently deletes the account. Their tasks and sessions are
+        removed automatically (ON DELETE CASCADE).
+      responses:
+        "200":
+          description: Account deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /health:
     get:
       tags: [Health]
@@ -214,6 +311,34 @@ components:
         error: { type: string, example: "title is required" }
       required: [success, error]
 
+    User:
+      type: object
+      properties:
+        id: { type: integer, format: uint64, example: 1 }
+        name: { type: string, example: "Ayesha Khan" }
+        email: { type: string, format: email, example: "ayesha@example.com" }
+        createdAt: { type: string, format: date-time }
+      required: [id, name, email, createdAt]
+
+    SignupInput:
+      type: object
+      properties:
+        name: { type: string, maxLength: 100, example: "Ayesha Khan" }
+        email: { type: string, format: email, example: "ayesha@example.com" }
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          example: "correct-horse-battery-staple"
+      required: [name, email, password]
+
+    LoginInput:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+      required: [email, password]
+
   responses:
     BadRequest:
       description: Validation error
@@ -222,6 +347,11 @@ components:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     NotFound:
       description: Task not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Unauthorized:
+      description: Missing, invalid, or expired session
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

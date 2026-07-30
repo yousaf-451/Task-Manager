@@ -54,6 +54,7 @@ const defaultTaskColor = "#0e6b5c"
 // Task is the core domain entity persisted in MySQL.
 type Task struct {
 	ID          uint64    `json:"id"`
+	UserID      uint64    `json:"userId"`
 	Title       string    `json:"title"`
 	Description string    `json:"description"`
 	DueDate     time.Time `json:"dueDate"`
@@ -81,6 +82,17 @@ type Stats struct {
 	UpcomingWeek      int `json:"upcomingWeek"`
 	Favorites         int `json:"favorites"`
 	Archived          int `json:"archived"`
+}
+
+// Pagination describes which "page" of a larger result set was returned,
+// so the client never has to guess whether more data exists. Computed by
+// the repository from a cheap COUNT(*) alongside the LIMIT/OFFSET query —
+// see repository.TaskRepository.Count.
+type Pagination struct {
+	Page       int `json:"page"`
+	PageSize   int `json:"pageSize"`
+	Total      int `json:"total"`
+	TotalPages int `json:"totalPages"`
 }
 
 // MarshalDueDate formats the due date as YYYY-MM-DD for JSON responses.

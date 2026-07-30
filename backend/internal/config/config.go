@@ -29,6 +29,13 @@ type Config struct {
 	DBMaxOpenConns       int
 	DBMaxIdleConns       int
 	DBConnMaxLifetimeMin time.Duration
+
+	// CookieSecure controls the Secure flag on the session cookie (see
+	// internal/handler/auth_handler.go). It must be true in any real
+	// deployment served over HTTPS, but defaults to false so local
+	// development over plain http://localhost still works - browsers drop
+	// Secure cookies entirely on non-HTTPS origins.
+	CookieSecure bool
 }
 
 // Load reads the .env file (if present) into the process environment and
@@ -50,6 +57,8 @@ func Load() (*Config, error) {
 		DBUser:     getEnv("DB_USER", "task_user"),
 		DBPassword: getEnv("DB_PASSWORD", "task_password"),
 		DBName:     getEnv("DB_NAME", "task_manager"),
+
+		CookieSecure: getEnv("COOKIE_SECURE", "false") == "true",
 	}
 
 	maxOpen, err := getEnvInt("DB_MAX_OPEN_CONNS", 25)

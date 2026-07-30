@@ -9,15 +9,29 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/granet/task-manager/internal/models"
 )
 
-// ErrNotFound is returned when a task lookup does not match any row.
+// ErrNotFound is returned when a task lookup does not match any row, OR
+// when it matches a row that belongs to a different user. The two cases
+// are indistinguishable on purpose: a user should get a 404, not a 403,
+// for tasks that exist but aren't theirs (this avoids leaking whether a
+// given task id exists at all to someone who doesn't own it).
 var ErrNotFound = errors.New("task not found")
+
+// defaultPageSize / maxPageSize bound how many rows a single List call can
+// return, so a client can never accidentally (or deliberately) ask for
+// the entire table in one request.
+const (
+	defaultPageSize = 10
+	maxPageSize     = 100
+)
 
 // TaskFilter narrows down a ListTasks call. Empty fields are ignored.
 type TaskFilter struct {
+	UserID          uint64          // required: every list is scoped to one user
 	Search          string          // matches against title or description (LIKE)
 	Status          models.Status   // exact match on status when non-empty
 	Priority        models.Priority // exact match on priority when non-empty
@@ -25,25 +39,61 @@ type TaskFilter struct {
 	FavoriteOnly    bool            // when true, only favorited tasks
 	IncludeArchived bool            // when false (default), archived tasks are excluded
 	SortBy          string          // "due_date_asc" | "due_date_desc" | "priority" | "created_at_desc" (default)
+
+	// Pagination. Page is 1-indexed; PageSize <= 0 falls back to
+	// defaultPageSize and is clamped to maxPageSize.
+	Page     int
+	PageSize int
 }
 
-const taskColumns = `id, title, description, due_date, status, priority, category, color, favorite, archived, created_at, updated_at`
+// normalizedPageSize returns the effective page size after applying
+// defaults/clamping, without mutating the filter.
+func (f TaskFilter) normalizedPageSize() int {
+	if f.PageSize <= 0 {
+		return defaultPageSize
+	}
+	if f.PageSize > maxPageSize {
+		return maxPageSize
+	}
+	return f.PageSize
+}
+
+// normalizedPage returns the effective 1-indexed page number.
+func (f TaskFilter) normalizedPage() int {
+	if f.Page <= 0 {
+		return 1
+	}
+	return f.Page
+}
+
+// offset returns the SQL OFFSET for this filter's page/pageSize.
+func (f TaskFilter) offset() int {
+	return (f.normalizedPage() - 1) * f.normalizedPageSize()
+}
+
+const taskColumns = `id, user_id, title, description, due_date, status, priority, category, color, favorite, archived, created_at, updated_at`
 
 // TaskRepository defines the persistence operations available for tasks.
+// Every method that reads/writes a specific task takes a userID and scopes
+// the query to `WHERE user_id = ?` (in addition to any id filter), so one
+// user can never see, edit, or delete another user's tasks - this is
+// enforced at the data-access layer, not just in the UI.
+//
 // Depending on an interface (rather than the concrete MySQL type) lets the
 // service layer be unit tested with an in-memory fake if desired.
 type TaskRepository interface {
 	Create(ctx context.Context, t *models.Task) (*models.Task, error)
-	GetByID(ctx context.Context, id uint64) (*models.Task, error)
+	GetByID(ctx context.Context, userID, id uint64) (*models.Task, error)
 	List(ctx context.Context, filter TaskFilter) ([]*models.Task, error)
+	Count(ctx context.Context, filter TaskFilter) (int, error)
 	Update(ctx context.Context, t *models.Task) (*models.Task, error)
-	Delete(ctx context.Context, id uint64) error
-	SetFavorite(ctx context.Context, id uint64, favorite bool) (*models.Task, error)
-	SetArchived(ctx context.Context, id uint64, archived bool) (*models.Task, error)
-	BulkDelete(ctx context.Context, ids []uint64) (int64, error)
-	BulkSetStatus(ctx context.Context, ids []uint64, status models.Status) (int64, error)
-	Stats(ctx context.Context) (*models.Stats, error)
-	Categories(ctx context.Context) ([]string, error)
+	Delete(ctx context.Context, userID, id uint64) error
+	SetFavorite(ctx context.Context, userID, id uint64, favorite bool) (*models.Task, error)
+	SetArchived(ctx context.Context, userID, id uint64, archived bool) (*models.Task, error)
+	BulkDelete(ctx context.Context, userID uint64, ids []uint64) (int64, error)
+	BulkSetStatus(ctx context.Context, userID uint64, ids []uint64, status models.Status) (int64, error)
+	Stats(ctx context.Context, userID uint64) (*models.Stats, error)
+	Categories(ctx context.Context, userID uint64) ([]string, error)
 }
 
 // mysqlTaskRepository is the MySQL-backed implementation of TaskRepository.
@@ -59,10 +109,11 @@ func NewMySQLTaskRepository(db *sql.DB) TaskRepository {
 
 func (r *mysqlTaskRepository) Create(ctx context.Context, t *models.Task) (*models.Task, error) {
 	const query = `
-		INSERT INTO tasks (title, description, due_date, status, priority, category, color)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tasks (user_id, title, description, due_date, status, priority, category, color)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	res, err := r.db.ExecContext(ctx, query, t.Title, t.Description, t.DueDate, t.Status, t.Priority, t.Category, t.Color)
+	log.Printf("[REPOSITORY] Create - running SQL INSERT for title=%q", t.Title)
+	res, err := r.db.ExecContext(ctx, query, t.UserID, t.Title, t.Description, t.DueDate, t.Status, t.Priority, t.Category, t.Color)
 	if err != nil {
 		return nil, fmt.Errorf("repository: create task: %w", err)
 	}
@@ -71,13 +122,14 @@ func (r *mysqlTaskRepository) Create(ctx context.Context, t *models.Task) (*mode
 	if err != nil {
 		return nil, fmt.Errorf("repository: read last insert id: %w", err)
 	}
+	log.Printf("[REPOSITORY] Create - insert successful, new row ID: %d", id)
 
-	return r.GetByID(ctx, uint64(id))
+	return r.GetByID(ctx, t.UserID, uint64(id))
 }
 
-func (r *mysqlTaskRepository) GetByID(ctx context.Context, id uint64) (*models.Task, error) {
-	query := `SELECT ` + taskColumns + ` FROM tasks WHERE id = ?`
-	row := r.db.QueryRowContext(ctx, query, id)
+func (r *mysqlTaskRepository) GetByID(ctx context.Context, userID, id uint64) (*models.Task, error) {
+	query := `SELECT ` + taskColumns + ` FROM tasks WHERE id = ? AND user_id = ?`
+	row := r.db.QueryRowContext(ctx, query, id, userID)
 
 	t, err := scanTask(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -90,38 +142,49 @@ func (r *mysqlTaskRepository) GetByID(ctx context.Context, id uint64) (*models.T
 	return t, nil
 }
 
-func (r *mysqlTaskRepository) List(ctx context.Context, filter TaskFilter) ([]*models.Task, error) {
-	query := `SELECT ` + taskColumns + ` FROM tasks WHERE 1 = 1`
+// whereClause builds the shared WHERE fragment (and args) used by both
+// List and Count, so the two queries can never drift out of sync with
+// each other - that would make the reported totalPages wrong.
+func (f TaskFilter) whereClause() (string, []any) {
+	query := "WHERE user_id = ?"
 	args := make([]any, 0, 6)
+	args = append(args, f.UserID)
 
-	if !filter.IncludeArchived {
+	if !f.IncludeArchived {
 		query += " AND archived = FALSE"
 	}
 
-	if filter.Search != "" {
+	if f.Search != "" {
 		query += " AND (title LIKE ? OR description LIKE ?)"
-		like := "%" + filter.Search + "%"
+		like := "%" + f.Search + "%"
 		args = append(args, like, like)
 	}
 
-	if filter.Status != "" {
+	if f.Status != "" {
 		query += " AND status = ?"
-		args = append(args, filter.Status)
+		args = append(args, f.Status)
 	}
 
-	if filter.Priority != "" {
+	if f.Priority != "" {
 		query += " AND priority = ?"
-		args = append(args, filter.Priority)
+		args = append(args, f.Priority)
 	}
 
-	if filter.Category != "" {
+	if f.Category != "" {
 		query += " AND category = ?"
-		args = append(args, filter.Category)
+		args = append(args, f.Category)
 	}
 
-	if filter.FavoriteOnly {
+	if f.FavoriteOnly {
 		query += " AND favorite = TRUE"
 	}
+
+	return query, args
+}
+
+func (r *mysqlTaskRepository) List(ctx context.Context, filter TaskFilter) ([]*models.Task, error) {
+	where, args := filter.whereClause()
+	query := `SELECT ` + taskColumns + ` FROM tasks ` + where
 
 	switch filter.SortBy {
 	case "due_date_asc":
@@ -136,6 +199,13 @@ func (r *mysqlTaskRepository) List(ctx context.Context, filter TaskFilter) ([]*m
 		query += " ORDER BY created_at DESC, id DESC"
 	}
 
+	// Pagination: only ever fetch one page's worth of rows from the
+	// database, never the whole table. LIMIT/OFFSET values are bound as
+	// parameters like everything else, not string-concatenated.
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, filter.normalizedPageSize(), filter.offset())
+
+	log.Printf("[REPOSITORY] List - running SQL SELECT query: %s | args=%v", query, args)
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("repository: list tasks: %w", err)
@@ -153,17 +223,31 @@ func (r *mysqlTaskRepository) List(ctx context.Context, filter TaskFilter) ([]*m
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("repository: iterate task rows: %w", err)
 	}
+	log.Printf("[REPOSITORY] List - query returned %d rows from database", len(tasks))
 
 	return tasks, nil
+}
+
+// Count returns how many rows match the filter (ignoring Page/PageSize),
+// which the service layer uses to compute totalPages for the client.
+func (r *mysqlTaskRepository) Count(ctx context.Context, filter TaskFilter) (int, error) {
+	where, args := filter.whereClause()
+	query := `SELECT COUNT(*) FROM tasks ` + where
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, fmt.Errorf("repository: count tasks: %w", err)
+	}
+	return count, nil
 }
 
 func (r *mysqlTaskRepository) Update(ctx context.Context, t *models.Task) (*models.Task, error) {
 	const query = `
 		UPDATE tasks
 		SET title = ?, description = ?, due_date = ?, status = ?, priority = ?, category = ?, color = ?
-		WHERE id = ?
+		WHERE id = ? AND user_id = ?
 	`
-	res, err := r.db.ExecContext(ctx, query, t.Title, t.Description, t.DueDate, t.Status, t.Priority, t.Category, t.Color, t.ID)
+	res, err := r.db.ExecContext(ctx, query, t.Title, t.Description, t.DueDate, t.Status, t.Priority, t.Category, t.Color, t.ID, t.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("repository: update task: %w", err)
 	}
@@ -176,13 +260,13 @@ func (r *mysqlTaskRepository) Update(ctx context.Context, t *models.Task) (*mode
 		return nil, ErrNotFound
 	}
 
-	return r.GetByID(ctx, t.ID)
+	return r.GetByID(ctx, t.UserID, t.ID)
 }
 
-func (r *mysqlTaskRepository) Delete(ctx context.Context, id uint64) error {
-	const query = `DELETE FROM tasks WHERE id = ?`
+func (r *mysqlTaskRepository) Delete(ctx context.Context, userID, id uint64) error {
+	const query = `DELETE FROM tasks WHERE id = ? AND user_id = ?`
 
-	res, err := r.db.ExecContext(ctx, query, id)
+	res, err := r.db.ExecContext(ctx, query, id, userID)
 	if err != nil {
 		return fmt.Errorf("repository: delete task: %w", err)
 	}
@@ -198,33 +282,34 @@ func (r *mysqlTaskRepository) Delete(ctx context.Context, id uint64) error {
 	return nil
 }
 
-func (r *mysqlTaskRepository) SetFavorite(ctx context.Context, id uint64, favorite bool) (*models.Task, error) {
-	res, err := r.db.ExecContext(ctx, `UPDATE tasks SET favorite = ? WHERE id = ?`, favorite, id)
+func (r *mysqlTaskRepository) SetFavorite(ctx context.Context, userID, id uint64, favorite bool) (*models.Task, error) {
+	res, err := r.db.ExecContext(ctx, `UPDATE tasks SET favorite = ? WHERE id = ? AND user_id = ?`, favorite, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("repository: set favorite: %w", err)
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return nil, ErrNotFound
 	}
-	return r.GetByID(ctx, id)
+	return r.GetByID(ctx, userID, id)
 }
 
-func (r *mysqlTaskRepository) SetArchived(ctx context.Context, id uint64, archived bool) (*models.Task, error) {
-	res, err := r.db.ExecContext(ctx, `UPDATE tasks SET archived = ? WHERE id = ?`, archived, id)
+func (r *mysqlTaskRepository) SetArchived(ctx context.Context, userID, id uint64, archived bool) (*models.Task, error) {
+	res, err := r.db.ExecContext(ctx, `UPDATE tasks SET archived = ? WHERE id = ? AND user_id = ?`, archived, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("repository: set archived: %w", err)
 	}
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		return nil, ErrNotFound
 	}
-	return r.GetByID(ctx, id)
+	return r.GetByID(ctx, userID, id)
 }
 
-func (r *mysqlTaskRepository) BulkDelete(ctx context.Context, ids []uint64) (int64, error) {
+func (r *mysqlTaskRepository) BulkDelete(ctx context.Context, userID uint64, ids []uint64) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	query, args := inClauseQuery(`DELETE FROM tasks WHERE id IN (%s)`, ids)
+	query, args := inClauseQuery(`DELETE FROM tasks WHERE user_id = ? AND id IN (%s)`, ids)
+	args = append([]any{userID}, args...)
 	res, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("repository: bulk delete: %w", err)
@@ -232,12 +317,12 @@ func (r *mysqlTaskRepository) BulkDelete(ctx context.Context, ids []uint64) (int
 	return res.RowsAffected()
 }
 
-func (r *mysqlTaskRepository) BulkSetStatus(ctx context.Context, ids []uint64, status models.Status) (int64, error) {
+func (r *mysqlTaskRepository) BulkSetStatus(ctx context.Context, userID uint64, ids []uint64, status models.Status) (int64, error) {
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	query, args := inClauseQuery(`UPDATE tasks SET status = ? WHERE id IN (%s)`, ids)
-	args = append([]any{status}, args...)
+	query, idArgs := inClauseQuery(`UPDATE tasks SET status = ? WHERE user_id = ? AND id IN (%s)`, ids)
+	args := append([]any{status, userID}, idArgs...)
 	res, err := r.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return 0, fmt.Errorf("repository: bulk set status: %w", err)
@@ -245,25 +330,25 @@ func (r *mysqlTaskRepository) BulkSetStatus(ctx context.Context, ids []uint64, s
 	return res.RowsAffected()
 }
 
-func (r *mysqlTaskRepository) Stats(ctx context.Context) (*models.Stats, error) {
+func (r *mysqlTaskRepository) Stats(ctx context.Context, userID uint64) (*models.Stats, error) {
 	const query = `
 		SELECT
 			COUNT(*) AS total,
 			COALESCE(SUM(status = 'completed'), 0) AS completed,
 			COALESCE(SUM(status = 'pending'), 0) AS pending,
 			COALESCE(SUM(status = 'in_progress'), 0) AS in_progress,
-			COALESCE(SUM(priority = 'high' AND status <> 'completed'), 0) AS high_priority_count,
+			COALESCE(SUM(priority = 'high' AND status <> 'completed'), 0) AS high_priority,
 			COALESCE(SUM(due_date < CURDATE() AND status <> 'completed'), 0) AS overdue,
 			COALESCE(SUM(due_date BETWEEN CURDATE() AND CURDATE() + INTERVAL 7 DAY AND status <> 'completed'), 0) AS upcoming_week,
 			COALESCE(SUM(favorite = TRUE), 0) AS favorites,
 			COALESCE(SUM(archived = TRUE), 0) AS archived
 		FROM tasks
-		WHERE archived = FALSE
+		WHERE user_id = ? AND archived = FALSE
 	`
 	// Archived tasks are excluded from every count except the archived
 	// count itself, which is why that one is computed separately below.
 	var s models.Stats
-	row := r.db.QueryRowContext(ctx, query)
+	row := r.db.QueryRowContext(ctx, query, userID)
 	if err := row.Scan(
 		&s.Total, &s.Completed, &s.Pending, &s.InProgress,
 		&s.HighPriority, &s.Overdue, &s.UpcomingWeek, &s.Favorites, &s.Archived,
@@ -274,20 +359,20 @@ func (r *mysqlTaskRepository) Stats(ctx context.Context) (*models.Stats, error) 
 	// The main query filters WHERE archived = FALSE, so s.Archived comes
 	// back as 0. Fetch the true archived count with a second, separate
 	// COUNT so the dashboard can still surface it.
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE archived = TRUE`).Scan(&s.Archived); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM tasks WHERE user_id = ? AND archived = TRUE`, userID).Scan(&s.Archived); err != nil {
 		return nil, fmt.Errorf("repository: archived count: %w", err)
 	}
 
 	return &s, nil
 }
 
-func (r *mysqlTaskRepository) Categories(ctx context.Context) ([]string, error) {
+func (r *mysqlTaskRepository) Categories(ctx context.Context, userID uint64) ([]string, error) {
 	const query = `
 		SELECT DISTINCT category FROM tasks
-		WHERE category <> '' AND archived = FALSE
+		WHERE user_id = ? AND category <> '' AND archived = FALSE
 		ORDER BY category ASC
 	`
-	rows, err := r.db.QueryContext(ctx, query)
+	rows, err := r.db.QueryContext(ctx, query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("repository: list categories: %w", err)
 	}
@@ -307,7 +392,7 @@ func (r *mysqlTaskRepository) Categories(ctx context.Context) ([]string, error) 
 	return categories, nil
 }
 
-// inClauseQuery builds a `WHERE id IN (?, ?, ...)` fragment safely (each id
+// inClauseQuery builds a `... IN (?, ?, ...)` fragment safely (each id
 // is still passed as a bound parameter, never string-concatenated).
 func inClauseQuery(template string, ids []uint64) (string, []any) {
 	placeholders := ""
@@ -331,7 +416,7 @@ type rowScanner interface {
 func scanTask(row rowScanner) (*models.Task, error) {
 	var t models.Task
 	err := row.Scan(
-		&t.ID, &t.Title, &t.Description, &t.DueDate, &t.Status,
+		&t.ID, &t.UserID, &t.Title, &t.Description, &t.DueDate, &t.Status,
 		&t.Priority, &t.Category, &t.Color, &t.Favorite, &t.Archived,
 		&t.CreatedAt, &t.UpdatedAt,
 	)

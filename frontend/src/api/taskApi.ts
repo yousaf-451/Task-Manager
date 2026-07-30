@@ -1,5 +1,12 @@
 import { apiClient } from "./client";
-import type { CreateTaskInput, Task, TaskListParams, TaskStats, UpdateTaskInput } from "../types/task";
+import type {
+  CreateTaskInput,
+  PaginatedTasks,
+  Task,
+  TaskListParams,
+  TaskStats,
+  UpdateTaskInput,
+} from "../types/task";
 
 function buildQuery(params: TaskListParams): string {
   const search = new URLSearchParams();
@@ -9,12 +16,17 @@ function buildQuery(params: TaskListParams): string {
   if (params.category) search.set("category", params.category);
   if (params.favorite) search.set("favorite", "true");
   if (params.sortBy) search.set("sortBy", params.sortBy);
+  if (params.page) search.set("page", String(params.page));
+  if (params.pageSize) search.set("pageSize", String(params.pageSize));
   const qs = search.toString();
   return qs ? `?${qs}` : "";
 }
 
 export const taskApi = {
-  list: (params: TaskListParams = {}) => apiClient.get<Task[]>(`/tasks${buildQuery(params)}`),
+  // Returns one page of tasks plus pagination metadata (total, totalPages,
+  // etc). The server never sends back more than `pageSize` rows, no
+  // matter how many tasks the user has in total.
+  list: (params: TaskListParams = {}) => apiClient.get<PaginatedTasks>(`/tasks${buildQuery(params)}`),
 
   getById: (id: number) => apiClient.get<Task>(`/tasks/${id}`),
 

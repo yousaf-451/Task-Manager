@@ -21,6 +21,7 @@ type envelope struct {
 // frontend's <input type="date"> expects.
 type taskResponse struct {
 	ID          uint64 `json:"id"`
+	UserID      uint64 `json:"userId"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	DueDate     string `json:"dueDate"`
@@ -37,6 +38,7 @@ type taskResponse struct {
 func toTaskResponse(t *models.Task) taskResponse {
 	return taskResponse{
 		ID:          t.ID,
+		UserID:      t.UserID,
 		Title:       t.Title,
 		Description: t.Description,
 		DueDate:     t.DueDateString(),
@@ -55,6 +57,47 @@ func toTaskResponseList(tasks []*models.Task) []taskResponse {
 	out := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
 		out = append(out, toTaskResponse(t))
+	}
+	return out
+}
+
+// paginatedTasksResponse is the `data` payload for GET /api/tasks. Keeping
+// the task list and pagination metadata together in one object (rather
+// than, say, a `X-Total-Count` header) means the frontend never has to
+// guess whether more pages exist.
+type paginatedTasksResponse struct {
+	Tasks      []taskResponse    `json:"tasks"`
+	Pagination models.Pagination `json:"pagination"`
+}
+
+func toPaginatedTasksResponse(tasks []*models.Task, pagination *models.Pagination) paginatedTasksResponse {
+	return paginatedTasksResponse{
+		Tasks:      toTaskResponseList(tasks),
+		Pagination: *pagination,
+	}
+}
+
+// userResponse mirrors models.User for JSON responses.
+type userResponse struct {
+	ID        uint64 `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func toUserResponse(u *models.User) userResponse {
+	return userResponse{
+		ID:        u.ID,
+		Name:      u.Name,
+		Email:     u.Email,
+		CreatedAt: u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+	}
+}
+
+func toUserResponseList(users []*models.User) []userResponse {
+	out := make([]userResponse, 0, len(users))
+	for _, u := range users {
+		out = append(out, toUserResponse(u))
 	}
 	return out
 }

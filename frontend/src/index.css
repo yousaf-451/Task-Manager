@@ -55,6 +55,67 @@ textarea {
 }
 
 /* ---------------------------------------------------------------- */
+/* Auth screen                                                        */
+/* ---------------------------------------------------------------- */
+
+.auth-shell {
+  min-height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 32px 28px;
+}
+
+.auth-card__title {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  letter-spacing: -0.01em;
+}
+
+.auth-card__subtitle {
+  margin: 0 0 22px;
+  color: var(--color-ink-soft);
+  font-size: 14px;
+}
+
+.auth-card__submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+.auth-card__toggle {
+  margin: 20px 0 0;
+  font-size: 13.5px;
+  color: var(--color-ink-soft);
+  text-align: center;
+}
+
+.auth-card__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent);
+  font-weight: 600;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------- */
 /* Layout                                                             */
 /* ---------------------------------------------------------------- */
 
@@ -277,6 +338,82 @@ textarea {
   margin-left: 4px;
 }
 
+.app-header__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.account-menu {
+  position: relative;
+}
+
+.account-menu__trigger {
+  padding: 8px 14px 8px 8px;
+}
+
+.account-menu__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.account-menu__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 220px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  padding: 10px;
+  z-index: 40;
+}
+
+.account-menu__email {
+  margin: 2px 8px 8px;
+  font-size: 12.5px;
+  color: var(--color-ink-soft);
+  word-break: break-all;
+}
+
+.account-menu__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 9px 8px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--color-ink);
+  cursor: pointer;
+}
+
+.account-menu__item:hover {
+  background: var(--color-bg);
+}
+
+.account-menu__item--danger {
+  color: var(--color-danger);
+}
+
+.account-menu__item--danger:hover {
+  background: var(--color-danger-bg);
+}
+
 /* ---------------------------------------------------------------- */
 /* Buttons                                                            */
 /* ---------------------------------------------------------------- */
@@ -387,6 +524,26 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.task-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 10px 0;
+}
+
+.task-pagination__label {
+  font-size: 13px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+}
+
+.task-pagination .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .task-card {
@@ -660,6 +817,8 @@ textarea {
 
 .form-field input[type="text"],
 .form-field input[type="date"],
+.form-field input[type="email"],
+.form-field input[type="password"],
 .form-field select,
 .form-field textarea {
   width: 100%;

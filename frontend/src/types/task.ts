@@ -35,6 +35,7 @@ export const TASK_COLORS = [
 // The shape returned by the API for a single task.
 export interface Task {
   id: number;
+  userId: number; // which user this task belongs to (referential integrity: FK -> users.id)
   title: string;
   description: string;
   dueDate: string; // YYYY-MM-DD
@@ -85,6 +86,47 @@ export interface TaskListParams {
   category?: string;
   favorite?: boolean;
   sortBy?: SortOption;
+  page?: number;
+  pageSize?: number;
+}
+
+// Pagination metadata returned alongside every task list, so the UI always
+// knows the current page, page size, total row count, and total pages -
+// without ever fetching more than one page's worth of rows at a time.
+export interface Pagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+// The full shape of GET /api/tasks's `data` field.
+export interface PaginatedTasks {
+  tasks: Task[];
+  pagination: Pagination;
+}
+
+// The signed-in account. Every request is scoped to this user on the
+// backend via the session cookie (see api/client.ts), so there is no
+// userId to pass around on the frontend anymore.
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  createdAt: string;
+}
+
+// Body for POST /api/auth/signup.
+export interface SignupInput {
+  name: string;
+  email: string;
+  password: string;
+}
+
+// Body for POST /api/auth/login.
+export interface LoginInput {
+  email: string;
+  password: string;
 }
 
 // Dashboard aggregate counts, returned by GET /api/tasks/stats.

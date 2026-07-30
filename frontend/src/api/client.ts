@@ -18,6 +18,8 @@ export class ApiError extends Error {
  * Thin wrapper around fetch() that:
  *  - prefixes the API base URL
  *  - always sends/expects JSON
+ *  - includes the session cookie on every request (see api/authApi.ts),
+ *    so the backend knows which signed-in user is calling
  *  - unwraps the {success, data, error} envelope
  *  - aborts and throws a friendly ApiError if the server doesn't respond
  *    within API_REQUEST_TIMEOUT_MS, so the UI never hangs forever
@@ -33,6 +35,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
       signal: controller.signal,
+      // Sends the HttpOnly session cookie set by login/signup, and lets
+      // the browser store the one that comes back. Required for the
+      // backend's session-based auth to work at all (see
+      // internal/middleware/auth.go and the CORS Allow-Credentials header).
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
         ...options.headers,
