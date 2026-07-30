@@ -337,7 +337,7 @@ func (r *mysqlTaskRepository) Stats(ctx context.Context, userID uint64) (*models
 			COALESCE(SUM(status = 'completed'), 0) AS completed,
 			COALESCE(SUM(status = 'pending'), 0) AS pending,
 			COALESCE(SUM(status = 'in_progress'), 0) AS in_progress,
-			COALESCE(SUM(priority = 'high' AND status <> 'completed'), 0) AS high_priority,
+			COALESCE(SUM(priority = 'high' AND status <> 'completed'), 0) AS 'high_priority',
 			COALESCE(SUM(due_date < CURDATE() AND status <> 'completed'), 0) AS overdue,
 			COALESCE(SUM(due_date BETWEEN CURDATE() AND CURDATE() + INTERVAL 7 DAY AND status <> 'completed'), 0) AS upcoming_week,
 			COALESCE(SUM(favorite = TRUE), 0) AS favorites,
